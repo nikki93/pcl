@@ -1,3 +1,10 @@
+(defclass bank-account ()
+  ((customer-name
+    :initarg :customer-name)
+   (balance
+    :initarg :balance
+    :initform 0)))
+
 (defgeneric withdraw (account amount)
   (:documentation "withdraw the specified amount,
 error if insufficient funds"))
