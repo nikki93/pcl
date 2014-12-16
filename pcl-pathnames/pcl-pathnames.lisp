@@ -1,5 +1,6 @@
-(ql:quickload 'lispbuilder-sdl)
-(ql:quickload 'cl-opengl)
+;;;; pcl-pathnames.lisp
+
+(in-package #:pcl-pathnames)
 
 (defun component-present-p (value)
   (and value (not (eql value :unpsecific))))
@@ -44,5 +45,3 @@
            ((funcall test name) (funcall fn name)))))
     (walk (pathname-as-directory dirname))))
 
-(defmacro do-directory ((var dirname) &body body)
-  `(walk-directory ,dirname #'(lambda (,var) ,@body)))
