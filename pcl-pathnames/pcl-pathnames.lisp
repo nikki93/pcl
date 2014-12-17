@@ -27,7 +27,7 @@
 (defun list-directory (dirname)
   (when (wild-pathname-p dirname)
     (error "can't list wild directories"))
-  (let ((wildcard (make-pathname :name :wild
+  (let ((wildcard (make-pathname :name :wild :type :wild
                                  :defaults (pathname-as-directory dirname))))
     (directory wildcard)))
 
