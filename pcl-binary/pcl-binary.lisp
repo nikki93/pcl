@@ -185,6 +185,28 @@
 
 
 ;;;
+;;; current object stack
+;;;
+
+(defvar *in-progress-objects* nil)
+
+(defmethod read-object :around (object stream)
+  (declare (ignore stream))
+  (let ((*in-progress-objects* (cons object *in-progress-objects*)))
+    (call-next-method)))
+
+(defmethod write-object :around (object stream)
+  (declare (ignore stream))
+  (let ((*in-progress-objects* (cons object *in-progress-objects*)))
+    (call-next-method)))
+
+(defun current-binary-object () (first *in-progress-objects*))
+
+(defun parent-of-type (type)
+  (find-if #'(lambda (x) (typep x type)) *in-progress-objects*))
+
+
+;;;
 ;;; test
 ;;;
 
