@@ -70,12 +70,10 @@
     (2
      (with-gensyms (type)
        `(progn
-          ,(destructuring-bind
-            ((in) &body body) (rest (assoc :reader spec))
+          ,(destructuring-bind ((in) &body body) (rest (assoc :reader spec))
             `(defmethod read-value ((,type (eql ',name)) ,in &key ,@args)
                ,@body))
-          ,(destructuring-bind
-            ((out val) &body body) (rest (assoc :writer spec))
+          ,(destructuring-bind ((out val) &body body) (rest (assoc :writer spec))
             `(defmethod write-value ((,type (eql ',name)) ,out ,val &key ,@args)
                ,@body)))))))
 
@@ -205,29 +203,5 @@
 (defun parent-of-type (type)
   (find-if #'(lambda (x) (typep x type)) *in-progress-objects*))
 
-
-;;;
-;;; test
-;;;
-
-(define-binary-class id3-tag ()
-  ((file-identifier (iso-8859-1-string :length 3))
-   (major-version u1)
-   (revision u1)
-   (flags u1)
-   (size id3-tag-size)
-   (frames (id3-frames :tag-size size))))
-
-(define-binary-type iso-8859-1-string (length)
-  (:reader (in)
-    (let ((string (make-string length)))
-      (dotimes (i length)
-        (setf (char string i) (code-char (read-byte in))))
-      string))
-  (:writer (out string)
-    (dotimes (i length)
-      (write-byte (char-code (char string i)) out))))
-
-(define-binary-type u1 () (unsigned-integer :bytes 1))
 
 
