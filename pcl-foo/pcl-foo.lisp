@@ -2,6 +2,8 @@
 
 (in-package #:pcl-foo)
 
+(defvar *html-output* *standard-output*)
+
 
 ;;;
 ;;; language basics
@@ -75,7 +77,7 @@
             (t (return)))))) 
 
 (defparameter *element-escapes* "<>&")
-(defparameter *attribute-escapes "<>&\"'")
+(defparameter *attribute-escapes* "<>&\"'")
 
 (defvar *escapes* *element-escapes*)
 
@@ -221,7 +223,57 @@
 
 (defun process-sexp-html (processor form)
   (if (self-evaluating-p form)
-      (raw-string processor (escape (print-to-string form) *escapes*) t)
+      (raw-string processor (escape (princ-to-string form) *escapes*) t)
       (process-cons-sexp-html processor form)))
 
+(defun process-cons-sexp-html (processor form)
+  (when (string= *escapes* *attribute-escapes*)
+    (error "Can't use cons forms in attributes: ~a" form))
+  (multiple-value-bind (tag attributes body) (parse-cons-form form)
+    (emit-open-tag processor tag body attributes)
+    (emit-element-body processor tag body)
+    (emit-close-tag processor tag body)))
 
+(defun emit-open-tag (processor tag body-p attributes)
+  (when (or (paragraph-element-p tag) (block-element-p tag))
+    (freshline processor))
+  (raw-string processor (format nil "<~(~a~)" tag))
+  (emit-attributes processor attributes)
+  (raw-string processor (if (and *xhtml* (not body-p)) "/>" ">")))
+
+(defun emit-attributes (processor attributes)
+  (do ((curr attributes (cddr curr))) ((null curr))
+    (let ((k (first curr)) (v (second curr)))
+      (raw-string processor (format nil " ~(~a~)='" k))
+      (let ((*escapes* *attribute-escapes*))
+        (process processor (if (eql v t) (string-downcase k) v)))
+      (raw-string processor "'"))))
+
+(defun emit-element-body (processor tag body)
+  (when (block-element-p tag)
+    (freshline processor)
+    (indent processor))
+
+  (when (preserve-whitespace-p tag) (toggle-indenting processor))
+  (dolist (item body) (process processor item))
+  (when (preserve-whitespace-p tag) (toggle-indenting processor))
+
+  (when (block-element-p tag)
+    (unindent processor)
+    (freshline processor)))
+
+(defun emit-close-tag (processor tag body-p)
+  (unless (and (or *xhtml* (empty-element-p tag)) (not body-p))
+    (raw-string processor (format nil "</~(~a~)>" tag)))
+  (when (or (paragraph-element-p tag) (block-element-p tag))
+    (freshline processor)))
+
+(defun emit-html (sexp) (process (get-pretty-printer) sexp))
+
+(defvar *html-pretty-printer* nil)
+
+(defun get-pretty-printer ()
+  (or *html-pretty-printer*
+      (make-instance 'html-pretty-printer
+                     :printer (make-instance 'indenting-printer
+                                             :out *html-output*))))
