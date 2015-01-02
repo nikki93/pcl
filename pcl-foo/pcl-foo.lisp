@@ -84,6 +84,40 @@
 
 
 ;;;
+;;; element types
+;;;
+
+(defparameter *block-elements*
+  '(:body :colgroup :dl :fieldset :form :head :html :map :noscript :object
+    :ol :optgroup :pre :script :select :style :table :tbody :tfoot :thead
+    :tr :ul))
+
+(defparameter *paragraph-elements*
+  '(:area :base :blockquote :br :button :caption :col :dd :div :dt :h1
+    :h2 :h3 :h4 :h5 :h6 :hr :input :li :link :meta :option :p :param
+    :td :textarea :th :title))
+
+(defparameter *inline-elements*
+  '(:a :abbr :acronym :address :b :bdo :big :cite :code :del :dfn :em
+    :i :img :ins :kbd :label :legend :q :samp :small :span :strong :sub
+    :sup :tt :var))
+
+(defun block-element-p (tag) (find tag *block-elements*))
+
+(defun paragraph-element-p (tag) (find tag *paragraph-elements*))
+
+(defparameter *empty-elements*
+  '(:area :base :br :col :hr :img :input :link :meta :param))
+
+(defparameter *preserve-whitespace-elements* '(:pre :script :style))
+
+(defun empty-element-p (tag) (find tag *empty-elements*))
+
+(defun preserve-whitespace-p (tag) (find tag *preserve-whitespace-elements*))
+
+
+
+;;;
 ;;; indenting printer
 ;;;
 
@@ -177,49 +211,16 @@
 
 
 ;;;
-;;; element types
-;;;
-
-(defparameter *block-elements*
-  '(:body :colgroup :dl :fieldset :form :head :html :map :noscript :object
-    :ol :optgroup :pre :script :select :style :table :tbody :tfoot :thead
-    :tr :ul))
-
-(defparameter *paragraph-elements*
-  '(:area :base :blockquote :br :button :caption :col :dd :div :dt :h1
-    :h2 :h3 :h4 :h5 :h6 :hr :input :li :link :meta :option :p :param
-    :td :textarea :th :title))
-
-(defparameter *inline-elements*
-  '(:a :abbr :acronym :address :b :bdo :big :cite :code :del :dfn :em
-    :i :img :ins :kbd :label :legend :q :samp :small :span :strong :sub
-    :sup :tt :var))
-
-(defun block-element-p (tag) (find tag *block-elements*))
-
-(defun paragraph-element-p (tag) (find tag *paragraph-elements*))
-
-(defparameter *empty-elements*
-  '(:area :base :br :col :hr :img :input :link :meta :param))
-
-(defparameter *preserve-whitespace-elements* '(:pre :script :style))
-
-(defun empty-element-p (tag) (find tag *empty-elements*))
-
-(defun preserve-whitespace-p (tag) (find tag *preserve-whitespace-elements*))
-
-
-
-;;;
 ;;; evaluation
 ;;;
 
 (defparameter *xhtml* nil)
 
 (defun process (processor form)
-  (if (sexp-html-p form)
-      (process-sexp-html processor form)
-      (error "Malformed FOO form: ~s" form)))
+  (cond
+    ((sexp-html-p form) (process-sexp-html processor form))
+    ((consp form) (embed-code processor form))
+    (t (embed-value processor form))))
 
 (defun process-sexp-html (processor form)
   (if (self-evaluating-p form)
@@ -277,3 +278,136 @@
       (make-instance 'html-pretty-printer
                      :printer (make-instance 'indenting-printer
                                              :out *html-output*))))
+
+
+
+;;;
+;;; compiler
+;;;
+
+;;; ops buffer
+
+(defun make-op-buffer ()
+  (make-array 10 :adjustable t :fill-pointer 0))
+
+(defun push-op (op ops-buffer)
+  (vector-push-extend op ops-buffer))
+
+
+;;; compiler backend
+
+(defclass html-compiler ()
+  ((ops :accessor ops :initform (make-op-buffer))))
+
+(defmethod raw-string ((compiler html-compiler) string &optional newlines-p)
+  (push-op `(:raw-string ,string ,newlines-p) (ops compiler)))
+
+(defmethod newline ((compiler html-compiler))
+  (push-op `(:newline) (ops compiler)))
+
+(defmethod freshline ((compiler html-compiler))
+  (push-op `(:freshline) (ops compiler)))
+
+(defmethod indent ((compiler html-compiler))
+  (push-op `(:indent) (ops compiler)))
+
+(defmethod unindent ((compiler html-compiler))
+  (push-op `(:unindent) (ops compiler)))
+
+(defmethod toggle-indent ((compiler html-compiler))
+  (push-op `(:toggle-indent) (ops compiler)))
+
+(defmethod embed-value ((compiler html-compiler) value)
+  (push-op `(:embed-value ,value *escapes*) (ops compiler)))
+
+(defmethod embed-code ((compiler html-compiler) code)
+  (push-op `(:embed-code ,code) (ops compiler)))
+
+(defun sexp->ops (body)
+  (let ((compiler (make-instance 'html-compiler)))
+    (dolist (form body) (process compiler form))
+    (ops compiler)))
+
+
+;;; code generation
+
+(defun optimize-static-output (ops)
+  (let ((new-ops (make-op-buffer)))
+    (with-output-to-string (buf)
+      (flet ((add-op (op)
+               (compile-buffer buf new-ops)
+               (push-op op new-ops)))
+        (loop for op across ops do
+             (ecase (first op)
+               (:raw-string (write-sequence (second op) buf))
+               ((:newline :embed-value :embed-code) (add-op op))
+               ((:indent :unindent :freshline :toggle-indenting)
+                (when *pretty* (add-op op)))))
+        (compile-buffer buf new-ops)))
+    new-ops))
+
+(defun compile-buffer (buf ops)
+  (do ((str (get-output-stream-string buf)) (start 0) (pos))
+      (nil)
+    (setf pos (position #\Newline str :start start))
+    (when (< start (length str))
+      (push-op `(:raw-string ,(subseq str start pos) nil) ops))
+    (if pos (push-op '(:newline) ops) (return))))
+
+(defun generate-code (ops)
+  (loop for op across ops collect (apply #'op->code op)))
+
+
+(defgeneric op->code (op &rest operands))
+
+(defmethod op->code ((op (eql :raw-string)) &rest operands)
+  (destructuring-bind (string check-for-newlines) operands
+    (if *pretty*
+        `(raw-string *html-pretty-printer* ,string ,check-for-newlines)
+        `(write-sequence ,string *html-output*))))
+
+(defmethod op->code ((op (eql :newline)) &rest operands)
+  (declare (ignore operands))
+  (if *pretty*
+      `(newline *html-pretty-printer*)
+      `(write-char #\Newline *html-output*)))
+
+(defmethod op->code ((op (eql :freshline)) &rest operands)
+  (declare (ignore operands))
+  (if *pretty*
+      `(freshline *html-pretty-printer*)
+      (error "Bad op when not pretty-printing: ~a" op)))
+
+(defmethod op->code ((op (eql :indent)) &rest operands)
+  (declare (ignore operands))
+  (if *pretty*
+      `(indent *html-pretty-printer*)
+      (error "Bad op when not pretty-printing: ~a" op)))
+
+(defmethod op->code ((op (eql :unindent)) &rest operands)
+  (declare (ignore operands))
+  (if *pretty*
+      `(unindent *html-pretty-printer*)
+      (error "Bad op when not pretty-printing: ~a" op)))
+
+(defmethod op->code ((op (eql :toggle-indenting)) &rest operands)
+  (declare (ignore operands))
+  (if *pretty*
+      `(toggle-indenting *html-pretty-printer*)
+      (error "Bad op when not pretty-printing: ~a" op)))
+
+(defmethod op->code ((op (eql :embed-value)) &rest operands)
+  (destructuring-bind (value escapes) operands
+    (if *pretty*
+        (if escapes
+            `(raw-string *html-pretty-printer* (escape (princ-to-string ,value)
+                                                       ,escapes) t)
+            `(raw-string *html-pretty-printer* (princ-to-string ,value) t))
+        (if escapes
+            `(write-sequence (escape (princ-to-string ,value) ,escapes)
+                             *html-output*)
+            `(princ ,value *html-output*)))))
+
+
+(defmethod op->code ((op (eql :embed-code)) &rest operands)
+  (first operands))
